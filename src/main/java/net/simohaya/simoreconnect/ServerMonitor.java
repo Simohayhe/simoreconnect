@@ -89,10 +89,17 @@ public class ServerMonitor {
         RegisteredServer lobby = lobbyOpt.get();
 
         for (Player player : proxy.getAllPlayers()) {
+            // 全員にダウン通知（復活通知と同じテイスト）
+            player.sendMessage(Component.text(
+                    "サーバー [" + downServer + "] がダウンしました！",
+                    NamedTextColor.RED
+            ));
+
+            // ダウンしたサーバーにいる人だけ lobby に転送
             player.getCurrentServer().ifPresent(conn -> {
                 if (conn.getServerInfo().getName().equals(downServer)) {
                     player.sendMessage(Component.text(
-                            "サーバー [" + downServer + "] がダウンしました。lobbyに転送します...",
+                            "lobbyに転送します...",
                             NamedTextColor.RED
                     ));
                     player.createConnectionRequest(lobby).fireAndForget();
