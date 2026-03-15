@@ -15,11 +15,13 @@ public class FallbackListener {
     private final ProxyServer proxy;
     private final Logger logger;
     private final PluginConfig config;
+    private final ServerMonitor serverMonitor;
 
-    public FallbackListener(ProxyServer proxy, Logger logger, PluginConfig config) {
-        this.proxy  = proxy;
-        this.logger = logger;
-        this.config = config;
+    public FallbackListener(ProxyServer proxy, Logger logger, PluginConfig config, ServerMonitor serverMonitor) {
+        this.proxy         = proxy;
+        this.logger        = logger;
+        this.config        = config;
+        this.serverMonitor = serverMonitor;
     }
 
     @Subscribe
@@ -33,6 +35,10 @@ public class FallbackListener {
             logger.error("lobbyサーバーが見つかりません: {}", config.getLobbyServerName());
             return;
         }
+
+        // キック時に元サーバーを記録
+        serverMonitor.recordPreviousServer(event.getPlayer().getUniqueId(), kickedFrom);
+        logger.info("元サーバー記録（キック時）: {} → {}", event.getPlayer().getUsername(), kickedFrom);
 
         event.setResult(KickedFromServerEvent.RedirectPlayer.create(
                 lobbyOpt.get(),

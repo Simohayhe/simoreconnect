@@ -41,7 +41,7 @@ public class Simoreconnect {
         serverMonitor = new ServerMonitor(server, logger, config);
         serverMonitor.start();
 
-        server.getEventManager().register(this, new FallbackListener(server, logger, config));
+        server.getEventManager().register(this, new FallbackListener(server, logger, config, serverMonitor));
 
         logger.info("simoreconnect 起動完了！");
     }
