@@ -41,7 +41,12 @@ public class Simoreconnect {
         serverMonitor = new ServerMonitor(server, logger, config);
         serverMonitor.start();
 
+        // ServerSelectorBridge を追加
+        ServerSelectorBridge bridge = new ServerSelectorBridge(server, logger, config, serverMonitor);
+        bridge.register();
+
         server.getEventManager().register(this, new FallbackListener(server, logger, config, serverMonitor));
+        server.getEventManager().register(this, bridge);  // ← 追加
 
         logger.info("simoreconnect 起動完了！");
     }

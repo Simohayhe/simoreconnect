@@ -144,4 +144,8 @@ public class ServerMonitor {
         previousServer.put(uuid, serverName);
     }
 
+    public boolean isOnline(String serverName) {
+        return serverStatus.getOrDefault(serverName, false);
+    }
+
 }
