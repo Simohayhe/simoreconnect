@@ -6,7 +6,6 @@ import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
-import com.velocitypowered.api.proxy.server.RegisteredServer;
 import org.slf4j.Logger;
 
 import java.io.ByteArrayInputStream;
@@ -15,21 +14,18 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
-/**
- * lobby との Plugin Messaging を担当。
- * - lobby参加時にサーバー一覧+状態を送信
- * - lobby からの転送リクエストを受信して実行
- */
 public class ServerSelectorBridge {
 
-    // Velocity → lobby（サーバー一覧送信）
     private static final MinecraftChannelIdentifier SERVER_LIST_CHANNEL =
             MinecraftChannelIdentifier.create("simoreconnect", "serverlist");
-
-    // lobby → Velocity（転送リクエスト受信）
     private static final MinecraftChannelIdentifier CONNECT_CHANNEL =
             MinecraftChannelIdentifier.create("simoreconnect", "connect");
+    private static final MinecraftChannelIdentifier REFRESH_CHANNEL =
+            MinecraftChannelIdentifier.create("simoreconnect", "refresh");
+    private static final MinecraftChannelIdentifier KICKED_FROM_CHANNEL =
+            MinecraftChannelIdentifier.create("simoreconnect", "kickedfrom");
 
     private final ProxyServer proxy;
     private final Logger logger;
@@ -47,59 +43,50 @@ public class ServerSelectorBridge {
     public void register() {
         proxy.getChannelRegistrar().register(SERVER_LIST_CHANNEL);
         proxy.getChannelRegistrar().register(CONNECT_CHANNEL);
+        proxy.getChannelRegistrar().register(REFRESH_CHANNEL);
+        proxy.getChannelRegistrar().register(KICKED_FROM_CHANNEL);
         logger.info("Plugin Messaging チャンネル登録完了");
     }
 
-    // -------------------------------------------------------------------
-    // lobby 参加時にサーバー一覧を送信
-    // -------------------------------------------------------------------
-
     @Subscribe
     public void onServerConnected(ServerConnectedEvent event) {
-        String serverName = event.getServer().getServerInfo().getName();
-
-        // lobby に参加したときだけ送信
-        if (!serverName.equalsIgnoreCase(config.getLobbyServerName())) return;
+        if (!event.getServer().getServerInfo().getName()
+                .equalsIgnoreCase(config.getLobbyServerName())) return;
 
         Player player = event.getPlayer();
-
-        // 少し遅延させてlobbyのロードを待つ
-        proxy.getScheduler().buildTask(getPlugin(), () -> {
-            sendServerList(player);
-        }).delay(1, java.util.concurrent.TimeUnit.SECONDS).schedule();
+        proxy.getScheduler().buildTask(getPlugin(), () -> sendServerList(player))
+                .delay(1, TimeUnit.SECONDS)
+                .schedule();
     }
-
-    // -------------------------------------------------------------------
-    // lobby からの転送リクエストを受信
-    // -------------------------------------------------------------------
 
     @Subscribe
     public void onPluginMessage(PluginMessageEvent event) {
-        if (!event.getIdentifier().equals(CONNECT_CHANNEL)) return;
-        if (!(event.getSource() instanceof com.velocitypowered.api.proxy.ServerConnection)) return;
+        if (!(event.getSource() instanceof com.velocitypowered.api.proxy.ServerConnection conn)) return;
 
-        event.setResult(PluginMessageEvent.ForwardResult.handled());
+        if (event.getIdentifier().equals(REFRESH_CHANNEL)) {
+            event.setResult(PluginMessageEvent.ForwardResult.handled());
+            sendServerList(conn.getPlayer());
+            return;
+        }
 
-        try {
-            DataInputStream in = new DataInputStream(
-                    new ByteArrayInputStream(event.getData()));
-            String playerName  = in.readUTF();
-            String targetServer = in.readUTF();
+        if (event.getIdentifier().equals(CONNECT_CHANNEL)) {
+            event.setResult(PluginMessageEvent.ForwardResult.handled());
+            try {
+                DataInputStream in = new DataInputStream(
+                        new ByteArrayInputStream(event.getData()));
+                String playerName   = in.readUTF();
+                String targetServer = in.readUTF();
 
-            proxy.getPlayer(playerName).ifPresent(player -> {
-                proxy.getServer(targetServer).ifPresent(target -> {
-                    player.createConnectionRequest(target).fireAndForget();
-                    logger.info("{}を{}に転送（GUIリクエスト）", playerName, targetServer);
-                });
-            });
-        } catch (IOException e) {
-            logger.error("転送リクエストの読み込みに失敗", e);
+                proxy.getPlayer(playerName).ifPresent(player ->
+                        proxy.getServer(targetServer).ifPresent(target -> {
+                            player.createConnectionRequest(target).fireAndForget();
+                            logger.info("{}を{}に転送（GUIリクエスト）", playerName, targetServer);
+                        }));
+            } catch (IOException e) {
+                logger.error("転送リクエストの読み込みに失敗", e);
+            }
         }
     }
-
-    // -------------------------------------------------------------------
-    // サーバー一覧を Plugin Messaging で送信
-    // -------------------------------------------------------------------
 
     public void sendServerList(Player player) {
         try {
@@ -114,7 +101,6 @@ public class ServerSelectorBridge {
                 int playerCount = proxy.getServer(name)
                         .map(s -> s.getPlayersConnected().size())
                         .orElse(0);
-
                 out.writeUTF(name);
                 out.writeBoolean(online);
                 out.writeInt(playerCount);
@@ -123,10 +109,25 @@ public class ServerSelectorBridge {
             player.getCurrentServer().ifPresent(conn ->
                     conn.sendPluginMessage(SERVER_LIST_CHANNEL, bytes.toByteArray()));
 
-            logger.debug("サーバー一覧送信: {}", player.getUsername());
         } catch (IOException e) {
             logger.error("サーバー一覧の送信に失敗", e);
         }
+    }
+
+    // キック元サーバー名をlobbyに通知
+    public void notifyKickedFrom(Player player, String serverName) {
+        proxy.getScheduler().buildTask(getPlugin(), () -> {
+            player.getCurrentServer().ifPresent(conn -> {
+                try {
+                    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                    DataOutputStream out = new DataOutputStream(bytes);
+                    out.writeUTF(serverName);
+                    conn.sendPluginMessage(KICKED_FROM_CHANNEL, bytes.toByteArray());
+                } catch (IOException e) {
+                    logger.error("キック通知の送信に失敗", e);
+                }
+            });
+        }).delay(2, TimeUnit.SECONDS).schedule();
     }
 
     private Object getPlugin() {
