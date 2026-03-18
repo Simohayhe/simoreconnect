@@ -20,11 +20,9 @@ public class ServerMonitor {
 
     private final ProxyServer proxy;
     private final Logger logger;
-    private final PluginConfig config;
+    private PluginConfig config; // finalを外す
 
     private final Map<String, Boolean> serverStatus = new HashMap<>();
-
-    // プレイヤーUUID → 転送前にいたサーバー名
     private final Map<UUID, String> previousServer = new ConcurrentHashMap<>();
 
     private ScheduledExecutorService scheduler;
@@ -52,6 +50,22 @@ public class ServerMonitor {
 
     public void stop() {
         if (scheduler != null) scheduler.shutdownNow();
+    }
+
+    public void reload(PluginConfig newConfig) {
+        this.config = newConfig;
+
+        // 監視対象サーバーのステータスをリセット
+        serverStatus.clear();
+        for (String name : config.getWatchServers()) {
+            serverStatus.put(name, true);
+        }
+
+        // スケジューラを再起動して新しいインターバルを反映
+        stop();
+        start();
+
+        logger.info("ServerMonitor リロード完了");
     }
 
     private void checkAll() {
@@ -100,7 +114,6 @@ public class ServerMonitor {
             player.getCurrentServer().ifPresent(conn -> {
                 if (!conn.getServerInfo().getName().equals(downServer)) return;
 
-                // 先に記録してから転送
                 previousServer.put(player.getUniqueId(), downServer);
                 logger.info("元サーバー記録: {} → {}", player.getUsername(), downServer);
 
@@ -125,7 +138,6 @@ public class ServerMonitor {
                     logger.info("リコネクト判定: {} origin={} upServer={}",
                             player.getUsername(), origin, upServer);
 
-                    // 元いたサーバーが復活したサーバーと一致する場合のみ転送
                     if (!origin.equals(upServer)) return;
 
                     player.sendMessage(Component.text(
@@ -139,7 +151,6 @@ public class ServerMonitor {
         }, config.getReconnectDelaySeconds(), TimeUnit.SECONDS);
     }
 
-    // FallbackListener から呼ばれる記録メソッド
     public void recordPreviousServer(UUID uuid, String serverName) {
         previousServer.put(uuid, serverName);
     }
@@ -147,5 +158,4 @@ public class ServerMonitor {
     public boolean isOnline(String serverName) {
         return serverStatus.getOrDefault(serverName, false);
     }
-
 }
